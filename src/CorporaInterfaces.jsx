@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useMemo, useState } from "react";
-import { fetchConcordanceLines, fetchMetaOpsPayload } from "./services/mockApi";
+import { fetchConcordanceLines, fetchMetaOpsPayload } from "./services/api";
 
 const seededRandom = (seed) => {
   let s = seed;

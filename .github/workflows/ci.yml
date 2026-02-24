@@ -15,5 +15,29 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm ci
-      - run: npm run build
+- run: npm ci
+- run: npm run build
+      - name: Stage dist assets for Go
+        run: |
+          rm -rf backend/dist
+          cp -r dist backend/dist
+      - uses: actions/setup-go@v4
+        with:
+          go-version: "1.22"
+      - name: Build Go server
+        run: |
+          mkdir -p bin
+          cd backend
+          go build -o ../bin/ecological-nlp-hub ./main.go
+
+  pages:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy static site
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./dist
