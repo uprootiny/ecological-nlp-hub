@@ -20,5 +20,5 @@ COPY --from=builder /usr/local/bin/ecological-nlp-hub /usr/local/bin/
 COPY --from=builder /app/dist /app/dist
 RUN chown -R eco:eco /app
 USER eco
-EXPOSE 8080
+EXPOSE 49152
 CMD ["/usr/local/bin/ecological-nlp-hub"]

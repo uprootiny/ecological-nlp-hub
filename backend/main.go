@@ -142,7 +142,7 @@ func main() {
 	mux.HandleFunc("/api/metaops", handleMetaOps)
 	mux.Handle("/", http.FileServer(http.FS(staticFiles)))
 	server := &http.Server{
-		Addr:         ":8080",
+		Addr:         ":49152",
 		Handler:      withLogging(mux),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
