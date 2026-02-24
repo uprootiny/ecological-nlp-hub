@@ -13,7 +13,7 @@ Refer to `SIMPLIFIED_RESILIENT_SYSTEM.md` for the pared-down, high-resilience va
 
 - Build the front-end assets first (`npm run build`) and run the Go server (`cd backend && go run main.go`). The server embeds `dist/` and exposes `/api/concordance` + `/api/metaops` on port 49152, so the React shell can fetch real data; `VITE_API_BASE` can be used to point to a different host if needed.
 - For development, keep `npm run dev -- --host 0.0.0.0` running and use the Go server only for API responses (Vite is already configured to proxy `/api` to `localhost:8080`).
-- The Dockerfile now builds both the React bundle and Go binary, producing an Alpine image that serves the SPA + APIs on port 49152. Build it with `docker build -t ecological-nlp-hub .` and run with `docker run -p 49152:49152 ecological-nlp-hub`.
+- The Dockerfile now sequentially builds the SPA (Node) and Go binary, then combines them into a distroless image that serves the SPA + APIs on port 49152 with minimal surface area. Build it with `docker build -t ecological-nlp-hub .` and run with `docker run -p 49152:49152 ecological-nlp-hub`.
 
 ## Running & Packaging
 
