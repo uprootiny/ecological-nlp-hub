@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
+import { fetchConcordanceLines, fetchMetaOpsPayload } from "./services/mockApi";
 
 const seededRandom = (seed) => {
   let s = seed;
@@ -27,18 +28,18 @@ const PALETTES = {
 
 const PAL_KEYS = Object.keys(PALETTES);
 
-const CONCORDANCE_LINES = [
-  { left: "the historical study of", kw: "language", right: "change reveals patterns" },
-  { left: "a formal model of", kw: "language", right: "structure was proposed" },
-  { left: "children acquire their first", kw: "language", right: "through social interaction" },
-  { left: "the boundaries between", kw: "language", right: "and dialect are fluid" },
-  { left: "computational approaches to", kw: "language", right: "processing have advanced" },
-  { left: "signed and spoken", kw: "language", right: "share deep structural" },
-  { left: "every natural human", kw: "language", right: "exhibits recursive syntax" },
-  { left: "the politics of", kw: "language", right: "policy affects education" },
-  { left: "contact between any two", kw: "language", right: "varieties produces creoles" },
-  { left: "documentation of endangered", kw: "language", right: "families remains urgent" },
-];
+const lazyComponentCache = new Map();
+const getLazyComponent = (Component) => {
+  if (!Component) return null;
+  if (!lazyComponentCache.has(Component)) {
+    lazyComponentCache.set(
+      Component,
+      React.lazy(() => Promise.resolve({ default: Component }))
+    );
+  }
+  return lazyComponentCache.get(Component);
+};
+
 
 const MORPHEMES = [
   { word: "unhappiness", parts: [{ m: "un-", type: "prefix", gloss: "NEG" }, { m: "happy", type: "root", gloss: "glad" }, { m: "-ness", type: "suffix", gloss: "NOM" }] },
@@ -51,51 +52,17 @@ const MORPHEMES = [
 const SPEECH_ACTS = ["assertive", "directive", "commissive", "expressive", "declarative"];
 const REGISTERS = ["frozen", "formal", "consultative", "casual", "intimate"];
 const NGRAM_DATA = ["the_of_the", "in_the_of", "to_the_and", "of_the_in", "and_the_to", "for_the_is", "is_a_the", "that_the_of", "on_the_in", "it_is_a"];
-const INFERENCE_EDGES = [
-  "LLM -> Reasoning Loop",
-  "Tool Call Circuit",
-  "Ontological Prism Layer",
-  "Meta-Abstraction Filter",
-  "Subagent Feedback Bus",
-];
-const META_MESSAGES = [
-  { agent: "Expedite", title: "Roadmap pulse", detail: "Healthy commits + tests are shipping ahead of the Vision S print.", when: "02:12", badge: "Committed" },
-  { agent: "Guardian", title: "Architecture sanity check", detail: "Ontology prisming still maps cleanly to the layered abstractions.", when: "02:09", badge: "Aligned" },
-  { agent: "Navigator", title: "LLM / tool loop", detail: "Inference cycles are hitting 8 edges with 92% success.", when: "01:58", badge: "Stable" },
-];
-const COMMIT_STREAM = [
-  { branch: "main", status: "healthy", progress: 78, label: "Release cadence" },
-  { branch: "metaops", status: "monitoring", progress: 42, label: "Roadmap stretch" },
-  { branch: "docs", status: "review", progress: 63, label: "Architecture living doc" },
-];
-const ARCH_CHECKS = [
-  { title: "Roadmap tractability", desc: "Milestones align with current compute / steward budgets.", ok: true },
-  { title: "Architecture coherence", desc: "Layers still reflect corpus stewardship → governance.", ok: true },
-  { title: "High-fidelity requests", desc: "Adaptive precision toggles have guardrails.", ok: false },
-];
-const PROMPT_SETS = [
-  { name: "Design System Guardian", prompt: "Ensure every interface mirrors the ontology prism.", focus: "Consistency" },
-  { name: "Commit Health Coach", prompt: "Highlight roadblocks and get commits green.", focus: "Progress" },
-  { name: "MetaOps Conductor", prompt: "Keep the CTO channel grounded in actionable insights.", focus: "Clarity" },
-];
-const EXTENSION_NAMES = [
-  "Concordance Helix",
-  "Morpheme Forge",
-  "Collocate Gravity",
-  "Diachronic Strata",
-  "Syntactic Cartography",
-  "Frequency Thermograph",
-];
 
-const ConcordanceHelix = ({ pal }) => {
+const ConcordanceHelix = ({ pal, lines }) => {
   const [selected, setSelected] = useState(null);
+  const concordanceLines = lines?.length ? lines : [];
   return (
     <div style={{ padding: 20 }}>
       <div style={{ fontSize: 11, color: pal.muted, marginBottom: 12, fontFamily: "monospace", letterSpacing: 1 }}>
-        KEYWORD: "language" · {CONCORDANCE_LINES.length} HITS · SORTED BY LEFT CONTEXT
+        KEYWORD: "language" · {concordanceLines.length} HITS · SORTED BY LEFT CONTEXT
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {CONCORDANCE_LINES.map((line, i) => {
+        {concordanceLines.map((line, i) => {
           const active = selected === i;
           const offset = Math.sin(i * 0.6) * 30;
           return (
@@ -910,29 +877,46 @@ const CorpusComparator = ({ pal }) => {
   );
 };
 
-const MetaOpsDeck = ({ pal }) => {
+const MetaOpsDeck = ({ pal, data }) => {
+  const {
+    edges = [],
+    messages = [],
+    commits = [],
+    checks = [],
+    prompts = [],
+    extensionNames = [],
+    energySignal = "amber",
+    status = "loading",
+  } = data || {};
+  const healthLabel = energySignal === "green" ? "Energy OK" : energySignal === "amber" ? "Standby" : "Throttle";
   return (
     <div style={{ padding: 20, height: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontFamily: "monospace", fontSize: 13, color: pal.accent, marginBottom: 4 }}>
-        ⚙︎ META-OPS DECK — VS CODE-STYLE EXTENSIONS
+        ⚙︎ META-OPS DECK — VS CODE-STYLE EXTENSIONS · {healthLabel}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 12, flex: 1 }}>
         <div style={{ borderRadius: 8, background: `${pal.muted}10`, border: `1px solid ${pal.muted}40`, padding: 12 }}>
           <div style={{ fontSize: 11, color: pal.fg, marginBottom: 8 }}>Extension tree</div>
           <div style={{ fontFamily: "monospace", fontSize: 10, display: "flex", flexDirection: "column", gap: 4 }}>
-            {EXTENSION_NAMES.map((name) => (
-              <span key={name} style={{ color: pal.muted }}>
-                {name}
-              </span>
-            ))}
+            {extensionNames.length
+              ? extensionNames.map((name) => (
+                  <span key={name} style={{ color: pal.muted }}>
+                    {name}
+                  </span>
+                ))
+              : <span style={{ color: pal.muted }}>Loading extensions...</span>}
             <span style={{ color: pal.accent, fontWeight: 600 }}>MetaOps Deck</span>
           </div>
           <div style={{ marginTop: 12, fontSize: 10, color: pal.muted }}>
             Inference edges:
             <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-              {INFERENCE_EDGES.map((edge) => (
-                <span key={edge} style={{ fontFamily: "monospace" }}>▸ {edge}</span>
-              ))}
+              {edges.length
+                ? edges.map((edge) => (
+                    <span key={edge} style={{ fontFamily: "monospace" }}>
+                      ▸ {edge}
+                    </span>
+                  ))
+                : <span style={{ fontSize: 9 }}>edges warming up…</span>}
             </div>
           </div>
         </div>
@@ -940,61 +924,75 @@ const MetaOpsDeck = ({ pal }) => {
           <div style={{ borderRadius: 10, border: `1px solid ${pal.accent}40`, background: `${pal.accent}10`, padding: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
               <span style={{ fontFamily: "monospace", fontSize: 11, letterSpacing: 1 }}>CTO CHANNEL</span>
-              <span style={{ fontSize: 10, color: pal.muted }}>live highlights</span>
+              <span style={{ fontSize: 10, color: pal.muted }}>{status}</span>
             </div>
             <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
-              {META_MESSAGES.map((msg) => (
-                <div key={msg.title} style={{ padding: "8px 10px", borderRadius: 6, background: pal.bg, border: `1px solid ${pal.muted}20` }}>
-                  <div style={{ fontSize: 10, color: pal.muted, display: "flex", justifyContent: "space-between" }}>
-                    <span>{msg.agent}</span>
-                    <span>{msg.when}</span>
-                  </div>
-                  <div style={{ fontFamily: "monospace", fontSize: 12, color: pal.fg, marginTop: 4 }}>
-                    {msg.title}
-                  </div>
-                  <div style={{ fontSize: 10, color: pal.muted, marginTop: 2 }}>{msg.detail}</div>
-                  <div style={{ marginTop: 6, fontSize: 9, color: pal.accent }}>{msg.badge}</div>
-                </div>
-              ))}
+              {messages.length
+                ? messages.map((msg) => (
+                    <div key={msg.title} style={{ padding: "8px 10px", borderRadius: 6, background: pal.bg, border: `1px solid ${pal.muted}20` }}>
+                      <div style={{ fontSize: 10, color: pal.muted, display: "flex", justifyContent: "space-between" }}>
+                        <span>{msg.agent}</span>
+                        <span>{msg.when}</span>
+                      </div>
+                      <div style={{ fontFamily: "monospace", fontSize: 12, color: pal.fg, marginTop: 4 }}>
+                        {msg.title}
+                      </div>
+                      <div style={{ fontSize: 10, color: pal.muted, marginTop: 2 }}>{msg.detail}</div>
+                      <div style={{ marginTop: 6, fontSize: 9, color: pal.accent }}>{msg.badge}</div>
+                    </div>
+                  ))
+                : <span style={{ fontSize: 10, color: pal.muted }}>Channel warming up…</span>}
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, flex: 1 }}>
             <div style={{ borderRadius: 10, border: `1px solid ${pal.muted}30`, padding: 12, background: `${pal.muted}10` }}>
               <div style={{ fontSize: 10, color: pal.muted, fontFamily: "monospace" }}>Healthy commits / roadmap</div>
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 10 }}>
-                {COMMIT_STREAM.map((commit) => (
-                  <div key={commit.branch}>
-                    <div style={{ fontSize: 11, color: pal.fg, display: "flex", justifyContent: "space-between" }}>
-                      <span>{commit.branch}</span>
-                      <span style={{ color: pal.accent }}>{commit.status}</span>
-                    </div>
-                    <div style={{ height: 6, borderRadius: 3, background: `${pal.accent}20`, marginTop: 4 }}>
-                      <div
-                        style={{
-                          width: `${commit.progress}%`,
-                          height: "100%",
-                          borderRadius: 3,
-                          background: pal.accent,
-                        }}
-                      />
-                    </div>
-                    <div style={{ fontSize: 9, color: pal.muted }}>{commit.label}</div>
-                  </div>
-                ))}
+                {commits.length
+                  ? commits.map((commit) => (
+                      <div key={commit.branch}>
+                        <div style={{ fontSize: 11, color: pal.fg, display: "flex", justifyContent: "space-between" }}>
+                          <span>{commit.branch}</span>
+                          <span style={{ color: pal.accent }}>{commit.status}</span>
+                        </div>
+                        <div style={{ height: 6, borderRadius: 3, background: `${pal.accent}20`, marginTop: 4 }}>
+                          <div
+                            style={{
+                              width: `${commit.progress}%`,
+                              height: "100%",
+                              borderRadius: 3,
+                              background: pal.accent,
+                            }}
+                          />
+                        </div>
+                        <div style={{ fontSize: 9, color: pal.muted }}>{commit.label}</div>
+                      </div>
+                    ))
+                  : <span style={{ fontSize: 10, color: pal.muted }}>Waiting on commit health …</span>}
               </div>
             </div>
             <div style={{ borderRadius: 10, border: `1px solid ${pal.muted}20`, padding: 12, background: `${pal.muted}08` }}>
               <div style={{ fontSize: 10, color: pal.muted, fontFamily: "monospace" }}>Architecture coherence</div>
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 10 }}>
-                {ARCH_CHECKS.map((check) => (
-                  <div key={check.title}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: check.ok ? "#6abf69" : "#d46a6a", display: "inline-block" }} />
-                      <span style={{ fontSize: 11, color: pal.fg }}>{check.title}</span>
-                    </div>
-                    <div style={{ fontSize: 9, color: pal.muted }}>{check.desc}</div>
-                  </div>
-                ))}
+                {checks.length
+                  ? checks.map((check) => (
+                      <div key={check.title}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: "50%",
+                              background: check.ok ? "#6abf69" : "#d46a6a",
+                              display: "inline-block",
+                            }}
+                          />
+                          <span style={{ fontSize: 11, color: pal.fg }}>{check.title}</span>
+                        </div>
+                        <div style={{ fontSize: 9, color: pal.muted }}>{check.desc}</div>
+                      </div>
+                    ))
+                  : <span style={{ fontSize: 10, color: pal.muted }}>Awaiting coherence scan …</span>}
               </div>
             </div>
           </div>
@@ -1003,19 +1001,20 @@ const MetaOpsDeck = ({ pal }) => {
       <div style={{ borderRadius: 10, border: `1px solid ${pal.muted}20`, padding: 12, background: `${pal.muted}08` }}>
         <div style={{ fontSize: 10, color: pal.muted, fontFamily: "monospace" }}>Promptset perspectives</div>
         <div style={{ marginTop: 10, display: "flex", gap: 12 }}>
-          {PROMPT_SETS.map((prompt) => (
-            <div key={prompt.name} style={{ flex: 1, padding: 10, background: pal.bg, borderRadius: 8, border: `1px solid ${pal.muted}20` }}>
-              <div style={{ fontSize: 11, color: pal.accent }}>{prompt.name}</div>
-              <div style={{ fontSize: 9, color: pal.fg, fontFamily: "monospace", marginTop: 4 }}>{prompt.prompt}</div>
-              <div style={{ fontSize: 9, color: pal.muted, marginTop: 6 }}>Focus: {prompt.focus}</div>
-            </div>
-          ))}
+          {prompts.length
+            ? prompts.map((prompt) => (
+                <div key={prompt.name} style={{ flex: 1, padding: 10, background: pal.bg, borderRadius: 8, border: `1px solid ${pal.muted}20` }}>
+                  <div style={{ fontSize: 11, color: pal.accent }}>{prompt.name}</div>
+                  <div style={{ fontSize: 9, color: pal.fg, fontFamily: "monospace", marginTop: 4 }}>{prompt.prompt}</div>
+                  <div style={{ fontSize: 9, color: pal.muted, marginTop: 6 }}>Focus: {prompt.focus}</div>
+                </div>
+              ))
+            : <div style={{ fontSize: 10, color: pal.muted }}>Promptset loading …</div>}
         </div>
       </div>
     </div>
   );
 };
-
 const INTERFACES = [
   { id: "concordance", name: "Concordance Helix", sub: "Spiral KWIC viewer", icon: "◉", Component: ConcordanceHelix },
   { id: "morpheme", name: "Morpheme Forge", sub: "Morphological decomposition", icon: "⬡", Component: MorphemeForge },
@@ -1035,9 +1034,52 @@ const INTERFACES = [
 export default function CorporaInterfaces() {
   const [activeIdx, setActiveIdx] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [concordanceLines, setConcordanceLines] = useState([]);
+  const [metaOpsData, setMetaOpsData] = useState(null);
+  const [loadedPanels, setLoadedPanels] = useState(() => new Set(["concordance", "metaops"]));
 
-  const ActiveComponent = activeIdx !== null ? INTERFACES[activeIdx].Component : null;
+  useEffect(() => {
+    let cancelled = false;
+    fetchConcordanceLines().then((payload) => {
+      if (!cancelled) {
+        setConcordanceLines(payload.lines ?? []);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMetaOpsPayload().then((payload) => {
+      if (!cancelled) {
+        setMetaOpsData(payload);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const activeInterface = activeIdx !== null ? INTERFACES[activeIdx] : null;
+  const LazyActiveComponent = activeInterface ? getLazyComponent(activeInterface.Component) : null;
+  const panelProps =
+    activeInterface?.id === "concordance"
+      ? { lines: concordanceLines }
+      : activeInterface?.id === "metaops"
+        ? { data: metaOpsData }
+        : {};
   const activePal = activeIdx !== null ? PALETTES[PAL_KEYS[activeIdx % PAL_KEYS.length]] : PALETTES.slate;
+  const handleInterfaceToggle = (iface, idx) => {
+    setActiveIdx((prev) => (prev === idx ? null : idx));
+    setLoadedPanels((prev) => {
+      if (prev.has(iface.id)) return prev;
+      const next = new Set(prev);
+      next.add(iface.id);
+      return next;
+    });
+  };
 
   return (
     <div
@@ -1084,10 +1126,11 @@ export default function CorporaInterfaces() {
           {INTERFACES.map((iface, i) => {
             const isActive = activeIdx === i;
             const p = PALETTES[PAL_KEYS[i % PAL_KEYS.length]];
+            const isLoaded = loadedPanels.has(iface.id);
             return (
               <div
                 key={iface.id}
-                onClick={() => setActiveIdx(isActive ? null : i)}
+                onClick={() => handleInterfaceToggle(iface, i)}
                 style={{
                   padding: sidebarOpen ? "8px 14px" : "10px 0",
                   cursor: "pointer",
@@ -1119,6 +1162,9 @@ export default function CorporaInterfaces() {
                       {iface.name}
                     </div>
                     <div style={{ fontSize: 9, color: "#4a4e5c", marginTop: 1 }}>{iface.sub}</div>
+                    {!isLoaded && (
+                      <div style={{ fontSize: 7, color: "#6b6e7d", marginTop: 2, letterSpacing: 1 }}>lazy</div>
+                    )}
                   </>
                 )}
               </div>
@@ -1155,7 +1201,13 @@ export default function CorporaInterfaces() {
               </div>
             </div>
             <div style={{ flex: 1, overflow: "auto", background: activePal.bg }}>
-              <ActiveComponent pal={activePal} />
+              {LazyActiveComponent ? (
+                <Suspense fallback={<div style={{ padding: 20, color: "#63666f" }}>Loading panel…</div>}>
+                  <LazyActiveComponent pal={activePal} {...panelProps} />
+                </Suspense>
+              ) : (
+                <div style={{ padding: 20, color: "#63666f" }}>Panel loading…</div>
+              )}
             </div>
           </>
         ) : (
