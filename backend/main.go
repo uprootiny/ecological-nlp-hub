@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"path"
+	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type ConcordanceLine struct {
@@ -16,28 +19,22 @@ type ConcordanceLine struct {
 }
 
 type ConcordancePayload struct {
-	Keyword string           `json:"keyword"`
+	Keyword string            `json:"keyword"`
 	Lines   []ConcordanceLine `json:"lines"`
 }
 
-type MetaOpsPayload struct {
-	Edges          []string          `json:"edges"`
-	Messages       []MetaOpsMessage  `json:"messages"`
-	Commits        []MetaOpsCommit   `json:"commits"`
-	Checks         []MetaOpsCheck    `json:"checks"`
-	Prompts        []MetaOpsPrompt   `json:"prompts"`
-	ExtensionNames []string          `json:"extensionNames"`
-	EnergySignal   string            `json:"energySignal"`
-	Status         string            `json:"status"`
-	CacheStatus    string            `json:"cacheStatus"`
+type MetricsSummary struct {
+	RequestsTotal uint64  `json:"requestsTotal"`
+	AvgLatencyMs  float64 `json:"avgLatencyMs"`
+	EnergySignal  string  `json:"energySignal"`
 }
 
 type MetaOpsMessage struct {
-	Agent string `json:"agent"`
-	Title string `json:"title"`
+	Agent  string `json:"agent"`
+	Title  string `json:"title"`
 	Detail string `json:"detail"`
-	When  string `json:"when"`
-	Badge string `json:"badge"`
+	When   string `json:"when"`
+	Badge  string `json:"badge"`
 }
 
 type MetaOpsCommit struct {
@@ -57,6 +54,19 @@ type MetaOpsPrompt struct {
 	Name   string `json:"name"`
 	Prompt string `json:"prompt"`
 	Focus  string `json:"focus"`
+}
+
+type MetaOpsPayload struct {
+	Edges          []string         `json:"edges"`
+	Messages       []MetaOpsMessage `json:"messages"`
+	Commits        []MetaOpsCommit  `json:"commits"`
+	Checks         []MetaOpsCheck   `json:"checks"`
+	Prompts        []MetaOpsPrompt  `json:"prompts"`
+	ExtensionNames []string         `json:"extensionNames"`
+	EnergySignal   string           `json:"energySignal"`
+	Status         string           `json:"status"`
+	CacheStatus    string           `json:"cacheStatus"`
+	Metrics        MetricsSummary   `json:"metrics"`
 }
 
 var concordanceLines = []ConcordanceLine{
@@ -136,10 +146,39 @@ var (
 	staticFiles embed.FS
 )
 
+var (
+	requestCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ecological_nlp_requests_total",
+			Help: "Total HTTP requests handled by the NLP hub.",
+		},
+		[]string{"handler"},
+	)
+	requestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "ecological_nlp_request_duration_seconds",
+			Help:    "Request durations in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"handler"},
+	)
+	requestTotal uint64
+	totalLatency uint64
+	energyState  atomic.Value
+)
+
+func init() {
+	prometheus.MustRegister(requestCount, requestDuration)
+	energyState.Store("green")
+	go cycleEnergyState()
+}
+
 func main() {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/concordance", handleConcordance)
-	mux.HandleFunc("/api/metaops", handleMetaOps)
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/api/concordance", instrumentHandler("concordance", handleConcordance))
+	mux.HandleFunc("/api/metaops", instrumentHandler("metaops", handleMetaOps))
+	mux.HandleFunc("/api/status", instrumentHandler("status", handleStatus))
 	mux.Handle("/", http.FileServer(http.FS(staticFiles)))
 	server := &http.Server{
 		Addr:         ":49152",
@@ -159,7 +198,50 @@ func handleConcordance(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMetaOps(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, metaOps)
+	resp := metaOps
+	resp.Metrics = currentMetrics()
+	writeJSON(w, resp)
+}
+
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, currentMetrics())
+}
+
+func currentMetrics() MetricsSummary {
+	total := atomic.LoadUint64(&requestTotal)
+	latency := atomic.LoadUint64(&totalLatency)
+	avg := 0.0
+	if total > 0 {
+		avg = float64(latency)/1e6 / float64(total)
+	}
+	energy := energyState.Load().(string)
+	return MetricsSummary{
+		RequestsTotal: total,
+		AvgLatencyMs:  avg,
+		EnergySignal:  energy,
+	}
+}
+
+func instrumentHandler(name string, handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		requestCount.WithLabelValues(name).Inc()
+		handler(w, r)
+		duration := time.Since(start)
+		requestDuration.WithLabelValues(name).Observe(duration.Seconds())
+		atomic.AddUint64(&requestTotal, 1)
+		atomic.AddUint64(&totalLatency, uint64(duration.Microseconds()))
+	}
+}
+
+func cycleEnergyState() {
+	signals := []string{"green", "amber", "red"}
+	i := 0
+	for {
+		time.Sleep(12 * time.Second)
+		i = (i + 1) % len(signals)
+		energyState.Store(signals[i])
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

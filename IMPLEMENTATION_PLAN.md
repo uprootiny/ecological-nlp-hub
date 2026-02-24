@@ -59,6 +59,7 @@
 - **Infrastructure**: Deploy services in Kubernetes (k8s) for scalability; use Helm charts for database + worker deployments. Redis/Postgres statefulsets with persistent volumes.
 - **CI/CD**: GitHub Actions pipeline builds frontend, runs lint/tests, deploys to staging, triggers backend migrations, and notifies on ingestion job schedules.
 - **Observability**: Use OpenTelemetry traces from API gateway to worker jobs to track lineage + energy usage (custom span attributes).
+- **Prometheus instrumentation**: Go backend exposes `/metrics` for scraping and `/api/status` for quick instrumentation data; MetaOps pulls these metrics so the UI reflects realtime health and queue/budget status.
 
 ## Next Actions
 1. Build prototype ingestion flow + cache layer for KWIC + n-grams to prove hot/hot warm tier interaction.

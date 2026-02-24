@@ -67,5 +67,24 @@
 - **Sampling & sketching toggles** feed into drift and register modules to limit dataset size during exploration.
 - **Cache invalidation policies** aligned with ingestion: new corpus batches trigger invalidation + recomputation for dependent stats.
 - **Monitoring dashboards** track query latency, cache hit rates, and energy budget status to inform when to throttle heavy modules.
+- **Instrumentation bridges** publish Prometheus metrics (`/metrics`) and lightweight status checkpoints (`/api/status`) so the MetaOps deck visualizes request totals, latency, and energy signals while the backend streams to Grafana dashboards.
+- **UX-aligned NLP stack**: Each interface maps to microservices/pipelines—KWIC for Concordance Helix, morphological parser for Morpheme Forge, collocation store for Collocate Gravity, etc.; a shared API gateway orchestrates requests according to compute budget and routes to fast caches when possible.
+
+## Coherent NLP Implementation Layers
+1. **Corpus Intelligence Core**
+   - Batch ingestion (Apache Beam/Go workers) cleans, normalizes, lemmatizes, stores in columnar OLAP (DuckDB / Postgres) with hashed sentence IDs.
+   - Provenance metadata (source, zip, license, ingestion batch) stored alongside tokens so dashboards show lineage.
+2. **Statistical Cache Tier**
+   - Redis/SQLite caches hold KWIC indexes, frequency grids, PMI tables, register summaries; updated after each ingest.
+   - API gateway serves Concordance Helix and Frequency Thermograph straight from these caches, avoiding neural inference.
+3. **Annotation & Reasoning Services**
+   - Go-based services (or micro-VMs) run morphological segmentation, dependency parsing, pragmatic labelling; results cached per sentence hash with TTL.
+   - Services expose gRPC + REST; UI fetches via `api/concordance` etc., while MetaOps deck monitors service latency and energy token budget.
+4. **Embedding & Drift Pipeline**
+   - Batch jobs build embeddings (FAISS/Weaviate) + diachronic slices; run only when energy budget healthy and triggered by manual GPU jobs.
+   - Semantic Drift UI fetches drift time series stored in Timescale/Influx; heavy recompute jobs log to MetaOps channel as actions.
+5. **Governance & UX Integration**
+   - Policy engine (OPA) sits in API gateway enforcing dataset access, privacy budgets, traceability, and energy token thresholds.
+   - UX sketches translate to service boundaries: the MetaOps deck reads from health/roadmap APIs, Concordance Helix from KWIC cache, etc., so interfaces behave like lightweight VS Code extensions backed by the architecture.
 
 By aligning each interface with cached/batched services and avoiding redundant computation, this blueprint keeps the system responsive while staying mindful of ecological/resource constraints. Let me know if you’d like this turned into diagrams, implementation specs, or translated into runbooks. 

@@ -888,6 +888,10 @@ const MetaOpsDeck = ({ pal, data }) => {
     energySignal = "amber",
     status = "loading",
   } = data || {};
+  const metrics = data?.metrics;
+  const requestsLabel = metrics?.requestsTotal ?? "−";
+  const latencyLabel = typeof metrics?.avgLatencyMs === "number" ? metrics.avgLatencyMs.toFixed(1) : "−";
+  const energyLabel = metrics?.energySignal ?? energySignal;
   const healthLabel = energySignal === "green" ? "Energy OK" : energySignal === "amber" ? "Standby" : "Throttle";
   return (
     <div style={{ padding: 20, height: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -917,6 +921,14 @@ const MetaOpsDeck = ({ pal, data }) => {
                     </span>
                   ))
                 : <span style={{ fontSize: 9 }}>edges warming up…</span>}
+            </div>
+          </div>
+          <div style={{ marginTop: 14, fontSize: 9, color: pal.muted, fontFamily: "monospace" }}>
+            Instrumentation / requests
+            <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+              <span>Requests: {requestsLabel}</span>
+              <span>Avg latency: {latencyLabel} ms</span>
+              <span>Energy signal: {energyLabel}</span>
             </div>
           </div>
         </div>
