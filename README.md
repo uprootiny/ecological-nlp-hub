@@ -9,6 +9,8 @@ Use this project as the foundation to assemble the React front-end, Go-backed AP
 
 Refer to `SIMPLIFIED_RESILIENT_SYSTEM.md` for the pared-down, high-resilience variant that keeps only the snappy surfaces and energy guards.
 
+See `ROADMAP.md` for the planned milestones toward a `v1.0.0` point release and the CI/observability checkpoints that keep the project healthy.
+
 ## Running the Go backend + UI
 
 - Build the front-end assets first (`npm run build`) and run the Go server (`cd backend && go run main.go`). The server embeds `dist/` and exposes `/api/concordance` + `/api/metaops` on port 49152, so the React shell can fetch real data; `VITE_API_BASE` can be used to point to a different host if needed.
