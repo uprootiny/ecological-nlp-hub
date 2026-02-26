@@ -7,16 +7,18 @@ on:
     branches: [main, master]
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-- run: npm ci
-- run: npm run build
+      - run: npm ci
+      - run: npm run build
       - name: Stage dist assets for Go
         run: |
           rm -rf backend/dist
@@ -29,13 +31,8 @@ jobs:
           mkdir -p bin
           cd backend
           go build -o ../bin/ecological-nlp-hub ./main.go
-
-  pages:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Deploy static site
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
