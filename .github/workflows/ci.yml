@@ -30,6 +30,7 @@ jobs:
         run: |
           mkdir -p bin
           cd backend
+          go mod tidy
           go build -o ../bin/ecological-nlp-hub ./main.go
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
