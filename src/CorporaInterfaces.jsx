@@ -15,7 +15,15 @@ import {
   getCorpusStats,
   compareCorpora,
   getVocabulary,
+  getTaggedSentences,
+  getPOSDistribution,
+  getReadability,
+  getKeywords,
+  getDispersion,
 } from "./nlp/pipeline";
+import { GUTENBERG_TEXTS, fetchGutenbergText, fetchWikipediaArticle, WIKIPEDIA_COLLECTIONS, downloadBlob, exportToCSV, exportToJSON } from "./nlp/sources";
+import { tagSentence as posTagSentence } from "./nlp/pos-tagger";
+import { lemmatizeTagged } from "./nlp/lemmatizer";
 
 const seededRandom = (seed) => {
   let s = seed;
@@ -53,230 +61,175 @@ const DataAcquisition = ({ pal, onCorpusLoaded, corpora }) => {
   const [text, setText] = useState("");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [wikiQuery, setWikiQuery] = useState("");
+  const [loading, setLoading] = useState("");
   const [error, setError] = useState("");
+  const [gutenbergPage, setGutenbergPage] = useState(0);
 
   const handleAddText = () => {
     if (!text.trim() || !name.trim()) return;
     onCorpusLoaded(name.trim(), text.trim());
-    setText("");
-    setName("");
+    setText(""); setName("");
   };
-
-  const handleLoadSample = (sample) => {
-    onCorpusLoaded(sample.name, sample.text);
-  };
-
+  const handleLoadSample = (sample) => onCorpusLoaded(sample.name, sample.text);
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      onCorpusLoaded(file.name.replace(/\.[^.]+$/, ""), ev.target.result);
-    };
+    reader.onload = (ev) => onCorpusLoaded(file.name.replace(/\.[^.]+$/, ""), ev.target.result);
     reader.readAsText(file);
   };
-
   const handleFetchUrl = async () => {
     if (!url.trim()) return;
-    setLoading(true);
-    setError("");
+    setLoading("url"); setError("");
     try {
       const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
       const res = await fetch(proxyUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const html = await res.text();
-      // Extract text from HTML
       const doc = new DOMParser().parseFromString(html, "text/html");
-      // Remove script/style
       doc.querySelectorAll("script, style, nav, header, footer").forEach((el) => el.remove());
-      const text = doc.body?.innerText || doc.body?.textContent || "";
-      const cleanText = text.replace(/\n{3,}/g, "\n\n").trim();
-      if (cleanText.length < 50) throw new Error("Could not extract meaningful text");
-      const urlName = new URL(url).hostname.replace("www.", "");
-      onCorpusLoaded(`${urlName} (fetched)`, cleanText);
-    } catch (err) {
-      setError(`Fetch failed: ${err.message}`);
+      const extracted = (doc.body?.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
+      if (extracted.length < 50) throw new Error("Could not extract meaningful text");
+      onCorpusLoaded(`${new URL(url).hostname.replace("www.", "")} (fetched)`, extracted);
+    } catch (err) { setError(`URL fetch failed: ${err.message}`); }
+    setLoading("");
+  };
+  const handleGutenberg = async (book) => {
+    setLoading(`gutenberg-${book.id}`); setError("");
+    try {
+      const text = await fetchGutenbergText(book.id);
+      onCorpusLoaded(`${book.author} — ${book.title}`, text);
+    } catch (err) { setError(`Gutenberg: ${err.message}`); }
+    setLoading("");
+  };
+  const handleWikipedia = async (title) => {
+    const displayTitle = title || wikiQuery;
+    if (!displayTitle.trim()) return;
+    setLoading(`wiki-${displayTitle}`); setError("");
+    try {
+      const { title: realTitle, text } = await fetchWikipediaArticle(displayTitle.trim());
+      if (!text || text.length < 100) throw new Error("Article too short or not found");
+      onCorpusLoaded(`Wikipedia: ${realTitle}`, text);
+    } catch (err) { setError(`Wikipedia: ${err.message}`); }
+    setLoading("");
+  };
+  const handleWikiCollection = async (collectionName) => {
+    const articles = WIKIPEDIA_COLLECTIONS[collectionName];
+    if (!articles) return;
+    setLoading(`wiki-col-${collectionName}`); setError("");
+    const texts = [];
+    for (const title of articles.slice(0, 4)) {
+      try {
+        const { title: realTitle, text } = await fetchWikipediaArticle(title);
+        if (text && text.length > 100) texts.push(`## ${realTitle}\n\n${text}`);
+      } catch { /* skip failed articles */ }
     }
-    setLoading(false);
+    if (texts.length > 0) {
+      onCorpusLoaded(`Wikipedia: ${collectionName}`, texts.join("\n\n---\n\n"));
+    } else { setError(`Could not fetch any articles for ${collectionName}`); }
+    setLoading("");
   };
 
+  const gutenbergSlice = GUTENBERG_TEXTS.slice(gutenbergPage * 10, (gutenbergPage + 1) * 10);
+  const totalTokens = corpora.reduce((s, c) => s + (getProcessedCorpus(c)?.wordCount || 0), 0);
+  const inputStyle = { background: `${pal.muted}15`, border: `1px solid ${pal.muted}40`, color: pal.fg, padding: "6px 10px", borderRadius: 4, fontFamily: "monospace", fontSize: 11, outline: "none" };
+  const btnStyle = (active, disabled) => ({ background: active ? pal.accent : "transparent", color: active ? pal.bg : disabled ? pal.muted : pal.fg, border: `1px solid ${active ? pal.accent : pal.muted}`, padding: "4px 10px", borderRadius: 4, cursor: disabled ? "default" : "pointer", fontFamily: "monospace", fontSize: 10, opacity: disabled ? 0.5 : 1 });
+  const sectionLabel = (text) => <div style={{ fontSize: 10, color: pal.muted, marginBottom: 6, fontFamily: "monospace", letterSpacing: 1 }}>{text}</div>;
+
   return (
-    <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16, maxHeight: "calc(100vh - 60px)", overflowY: "auto" }}>
       <div style={{ fontSize: 11, color: pal.accent, fontFamily: "monospace", letterSpacing: 1 }}>
-        DATA ACQUISITION — {corpora.length} CORPORA LOADED ({corpora.reduce((s, c) => s + (getProcessedCorpus(c)?.wordCount || 0), 0).toLocaleString()} tokens)
+        DATA ACQUISITION — {corpora.length} corpora · {totalTokens.toLocaleString()} tokens
       </div>
 
-      {/* Sample Corpora */}
-      <div>
-        <div style={{ fontSize: 10, color: pal.muted, marginBottom: 6, fontFamily: "monospace" }}>BUILT-IN CORPORA</div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {SAMPLE_CORPORA.map((s) => {
-            const loaded = corpora.includes(s.name);
-            return (
-              <button
-                key={s.name}
-                onClick={() => !loaded && handleLoadSample(s)}
-                disabled={loaded}
-                style={{
-                  background: loaded ? `${pal.accent}20` : "transparent",
-                  border: `1px solid ${loaded ? pal.accent : pal.muted}`,
-                  color: loaded ? pal.accent : pal.fg,
-                  padding: "5px 10px",
-                  borderRadius: 4,
-                  cursor: loaded ? "default" : "pointer",
-                  fontFamily: "monospace",
-                  fontSize: 10,
-                  opacity: loaded ? 0.6 : 1,
-                }}
-              >
-                {loaded ? "✓ " : ""}{s.name}
-              </button>
-            );
-          })}
-        </div>
+      {error && <div style={{ fontSize: 10, color: "#d46a6a", padding: "6px 10px", background: "#d46a6a15", borderRadius: 4, fontFamily: "monospace" }}>{error}</div>}
+
+      {/* Built-in Corpora */}
+      {sectionLabel("BUILT-IN CORPORA (click to load)")}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {SAMPLE_CORPORA.map((s) => {
+          const loaded = corpora.includes(s.name);
+          return <button key={s.name} onClick={() => !loaded && handleLoadSample(s)} disabled={loaded} style={btnStyle(loaded, loaded)}>{loaded ? "✓ " : ""}{s.name}</button>;
+        })}
+      </div>
+
+      {/* Project Gutenberg */}
+      {sectionLabel("PROJECT GUTENBERG — Classic Literature")}
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        {gutenbergSlice.map((book) => {
+          const loaded = corpora.some((c) => c.includes(book.title));
+          const isLoading = loading === `gutenberg-${book.id}`;
+          return (
+            <button key={book.id} onClick={() => !loaded && !isLoading && handleGutenberg(book)} disabled={loaded || isLoading}
+              style={{ ...btnStyle(loaded, loaded || isLoading), maxWidth: 200, textAlign: "left", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {isLoading ? "..." : loaded ? "✓ " : ""}{book.author}: {book.title}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button onClick={() => setGutenbergPage(Math.max(0, gutenbergPage - 1))} disabled={gutenbergPage === 0} style={btnStyle(false, gutenbergPage === 0)}>← prev</button>
+        <span style={{ fontFamily: "monospace", fontSize: 9, color: pal.muted, padding: "4px 8px" }}>{gutenbergPage * 10 + 1}–{Math.min((gutenbergPage + 1) * 10, GUTENBERG_TEXTS.length)} of {GUTENBERG_TEXTS.length}</span>
+        <button onClick={() => setGutenbergPage(gutenbergPage + 1)} disabled={(gutenbergPage + 1) * 10 >= GUTENBERG_TEXTS.length} style={btnStyle(false, (gutenbergPage + 1) * 10 >= GUTENBERG_TEXTS.length)}>next →</button>
+      </div>
+
+      {/* Wikipedia */}
+      {sectionLabel("WIKIPEDIA — Search or load curated collections")}
+      <div style={{ display: "flex", gap: 6 }}>
+        <input value={wikiQuery} onChange={(e) => setWikiQuery(e.target.value)} placeholder="Search Wikipedia article..." onKeyDown={(e) => e.key === "Enter" && handleWikipedia()} style={{ ...inputStyle, flex: 1 }} />
+        <button onClick={() => handleWikipedia()} disabled={!wikiQuery.trim() || !!loading} style={btnStyle(false, !wikiQuery.trim() || !!loading)}>{loading.startsWith("wiki-") && !loading.startsWith("wiki-col") ? "..." : "Fetch"}</button>
+      </div>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        {Object.keys(WIKIPEDIA_COLLECTIONS).map((col) => {
+          const isLoading = loading === `wiki-col-${col}`;
+          return <button key={col} onClick={() => handleWikiCollection(col)} disabled={!!loading} style={btnStyle(false, !!loading)}>{isLoading ? "Loading..." : col}</button>;
+        })}
       </div>
 
       {/* Paste Text */}
-      <div>
-        <div style={{ fontSize: 10, color: pal.muted, marginBottom: 6, fontFamily: "monospace" }}>PASTE / TYPE TEXT</div>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Corpus name..."
-          style={{
-            width: "100%",
-            background: `${pal.muted}15`,
-            border: `1px solid ${pal.muted}40`,
-            color: pal.fg,
-            padding: "6px 10px",
-            borderRadius: 4,
-            fontFamily: "monospace",
-            fontSize: 11,
-            marginBottom: 4,
-            outline: "none",
-          }}
-        />
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Paste your text here... (any language, any length)"
-          rows={5}
-          style={{
-            width: "100%",
-            background: `${pal.muted}15`,
-            border: `1px solid ${pal.muted}40`,
-            color: pal.fg,
-            padding: "8px 10px",
-            borderRadius: 4,
-            fontFamily: "monospace",
-            fontSize: 11,
-            resize: "vertical",
-            outline: "none",
-          }}
-        />
-        <button
-          onClick={handleAddText}
-          disabled={!text.trim() || !name.trim()}
-          style={{
-            marginTop: 4,
-            background: pal.accent,
-            color: pal.bg,
-            border: "none",
-            padding: "6px 16px",
-            borderRadius: 4,
-            cursor: "pointer",
-            fontFamily: "monospace",
-            fontSize: 11,
-            fontWeight: 600,
-            opacity: text.trim() && name.trim() ? 1 : 0.4,
-          }}
-        >
-          Process & Add Corpus
-        </button>
-      </div>
+      {sectionLabel("PASTE / TYPE TEXT")}
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Corpus name..." style={{ ...inputStyle, width: "100%" }} />
+      <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste your text here... (any language, any length)" rows={4} style={{ ...inputStyle, width: "100%", resize: "vertical" }} />
+      <button onClick={handleAddText} disabled={!text.trim() || !name.trim()} style={{ ...btnStyle(true, !text.trim() || !name.trim()), alignSelf: "flex-start" }}>Process & Add Corpus</button>
 
-      {/* File Upload */}
-      <div>
-        <div style={{ fontSize: 10, color: pal.muted, marginBottom: 6, fontFamily: "monospace" }}>UPLOAD FILE (.txt, .csv, .json)</div>
-        <input
-          type="file"
-          accept=".txt,.csv,.json,.md,.html"
-          onChange={handleFileUpload}
-          style={{ fontFamily: "monospace", fontSize: 10, color: pal.muted }}
-        />
-      </div>
-
-      {/* URL Fetch */}
-      <div>
-        <div style={{ fontSize: 10, color: pal.muted, marginBottom: 6, fontFamily: "monospace" }}>FETCH FROM URL (with CORS proxy)</div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://example.com/article..."
-            style={{
-              flex: 1,
-              background: `${pal.muted}15`,
-              border: `1px solid ${pal.muted}40`,
-              color: pal.fg,
-              padding: "6px 10px",
-              borderRadius: 4,
-              fontFamily: "monospace",
-              fontSize: 11,
-              outline: "none",
-            }}
-          />
-          <button
-            onClick={handleFetchUrl}
-            disabled={loading || !url.trim()}
-            style={{
-              background: pal.accent,
-              color: pal.bg,
-              border: "none",
-              padding: "6px 14px",
-              borderRadius: 4,
-              cursor: "pointer",
-              fontFamily: "monospace",
-              fontSize: 11,
-              fontWeight: 600,
-              opacity: loading || !url.trim() ? 0.4 : 1,
-            }}
-          >
-            {loading ? "Fetching..." : "Fetch"}
-          </button>
+      {/* File Upload + URL */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          {sectionLabel("UPLOAD FILE")}
+          <input type="file" accept=".txt,.csv,.json,.md,.html,.xml" onChange={handleFileUpload} style={{ fontFamily: "monospace", fontSize: 10, color: pal.muted }} />
         </div>
-        {error && <div style={{ fontSize: 10, color: "#d46a6a", marginTop: 4, fontFamily: "monospace" }}>{error}</div>}
+        <div>
+          {sectionLabel("FETCH FROM URL")}
+          <div style={{ display: "flex", gap: 6 }}>
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://..." style={{ ...inputStyle, flex: 1 }} />
+            <button onClick={handleFetchUrl} disabled={loading === "url" || !url.trim()} style={btnStyle(false, loading === "url" || !url.trim())}>{loading === "url" ? "..." : "Go"}</button>
+          </div>
+        </div>
       </div>
 
-      {/* Loaded Corpora Stats */}
+      {/* Loaded Corpora with Stats & Export */}
       {corpora.length > 0 && (
         <div>
-          <div style={{ fontSize: 10, color: pal.muted, marginBottom: 6, fontFamily: "monospace" }}>LOADED CORPORA</div>
+          {sectionLabel(`LOADED CORPORA (${corpora.length})`)}
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {corpora.map((name) => {
-              const stats = getCorpusStats(name);
+            {corpora.map((corpusName) => {
+              const stats = getCorpusStats(corpusName);
               if (!stats) return null;
+              const r = stats.readability;
               return (
-                <div
-                  key={name}
-                  style={{
-                    padding: "8px 12px",
-                    background: `${pal.accent}08`,
-                    border: `1px solid ${pal.muted}30`,
-                    borderRadius: 4,
-                    fontFamily: "monospace",
-                    fontSize: 10,
-                    display: "grid",
-                    gridTemplateColumns: "1fr auto",
-                    gap: 8,
-                    color: pal.fg,
-                  }}
-                >
-                  <span style={{ color: pal.accent, fontWeight: 600 }}>{name}</span>
-                  <span style={{ color: pal.muted }}>
-                    {stats.tokens.toLocaleString()} tok · {stats.types.toLocaleString()} types · TTR {stats.ttr.toFixed(3)} · {stats.sentences} sent
-                  </span>
+                <div key={corpusName} style={{ padding: "8px 12px", background: `${pal.accent}08`, border: `1px solid ${pal.muted}30`, borderRadius: 4, fontFamily: "monospace", fontSize: 10, color: pal.fg }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ color: pal.accent, fontWeight: 600 }}>{corpusName}</span>
+                    <button onClick={() => {
+                      const data = { name: corpusName, ...stats, topWords: getVocabulary(corpusName).slice(0, 20) };
+                      downloadBlob(exportToJSON(data), `${corpusName.replace(/[^a-zA-Z0-9]/g, "_")}_stats.json`, "application/json");
+                    }} style={{ background: "transparent", border: `1px solid ${pal.muted}40`, color: pal.muted, padding: "2px 6px", borderRadius: 3, cursor: "pointer", fontFamily: "monospace", fontSize: 8 }}>Export JSON</button>
+                  </div>
+                  <div style={{ color: pal.muted }}>
+                    {stats.tokens.toLocaleString()} tok · {stats.types.toLocaleString()} types · TTR {stats.ttr.toFixed(3)} · MATTR {stats.mattr.toFixed(3)} · {stats.sentences} sent
+                    {r && <> · FK {r.fleschKincaid} · Flesch {r.fleschEase}</>}
+                  </div>
                 </div>
               );
             })}
@@ -663,62 +616,124 @@ const DiachronicStrata = ({ pal, corpora }) => {
 
 const SyntacticCartography = ({ pal, corpora }) => {
   const [sentence, setSentence] = useState("The quick brown fox jumps over the lazy dog");
-  // Simple rule-based POS tagger
-  const tagSentence = useCallback((sent) => {
-    const words = sent.split(/\s+/).filter(Boolean);
-    const dets = new Set(["the", "a", "an", "this", "that", "these", "those", "my", "your", "his", "her", "its", "our", "their"]);
-    const preps = new Set(["in", "on", "at", "to", "for", "with", "by", "from", "of", "about", "over", "under", "between", "through", "into", "during", "after", "before"]);
-    const conj = new Set(["and", "or", "but", "nor", "yet", "so"]);
-    const pron = new Set(["i", "you", "he", "she", "it", "we", "they", "me", "him", "us", "them", "who", "what", "which"]);
-    const aux = new Set(["is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "shall", "should", "may", "might", "can", "could", "must"]);
-    return words.map((w) => {
-      const lc = w.toLowerCase().replace(/[^a-z']/g, "");
-      if (dets.has(lc)) return { w, pos: "DET" };
-      if (preps.has(lc)) return { w, pos: "ADP" };
-      if (conj.has(lc)) return { w, pos: "CONJ" };
-      if (pron.has(lc)) return { w, pos: "PRON" };
-      if (aux.has(lc)) return { w, pos: "AUX" };
-      if (lc.endsWith("ly")) return { w, pos: "ADV" };
-      if (lc.endsWith("ing") || lc.endsWith("ed") || lc.endsWith("es") || lc.endsWith("s") && lc.length > 3) return { w, pos: "VERB" };
-      if (lc.endsWith("ness") || lc.endsWith("ment") || lc.endsWith("tion") || lc.endsWith("ity")) return { w, pos: "NOUN" };
-      if (lc.endsWith("ous") || lc.endsWith("ful") || lc.endsWith("less") || lc.endsWith("ive") || lc.endsWith("able")) return { w, pos: "ADJ" };
-      // Default heuristic: short words after DET are likely ADJ/NOUN
-      return { w, pos: lc.length <= 4 ? "ADJ" : "NOUN" };
-    });
-  }, []);
+  const [activeCorpus, setActiveCorpus] = useState(corpora[0] || "");
+  const [sentIdx, setSentIdx] = useState(0);
 
-  const tagged = useMemo(() => tagSentence(sentence), [sentence, tagSentence]);
+  useEffect(() => {
+    if (corpora.length > 0 && !corpora.includes(activeCorpus)) setActiveCorpus(corpora[0]);
+  }, [corpora, activeCorpus]);
+
+  // Use real Viterbi POS tagger + lemmatizer
+  const tagged = useMemo(() => {
+    const tokens = sentence.split(/\s+/).filter(Boolean);
+    const posTagged = posTagSentence(tokens);
+    return lemmatizeTagged(posTagged);
+  }, [sentence]);
+
+  // Load sentences from corpus
+  const corpusSentences = useMemo(() => {
+    if (!activeCorpus) return [];
+    const taggedSents = getTaggedSentences(activeCorpus);
+    return taggedSents;
+  }, [activeCorpus]);
+
+  // POS distribution for corpus
+  const posDist = useMemo(() => {
+    if (!activeCorpus) return null;
+    return getPOSDistribution(activeCorpus);
+  }, [activeCorpus]);
+
+  const currentTagged = corpusSentences[sentIdx] || tagged.map(t => ({ word: t.word, tag: t.tag, lemma: t.word.toLowerCase() }));
   const [hovered, setHovered] = useState(null);
-  const posColors = { DET: "#5b9bd5", ADJ: "#d4a042", NOUN: pal.accent, VERB: "#6abf69", ADP: "#d46a8e", ADV: "#8b6abf", CONJ: "#40b0a0", PRON: "#c07830", AUX: "#7080a0" };
+  const posColors = { DET: "#5b9bd5", ADJ: "#d4a042", NOUN: pal.accent, VERB: "#6abf69", ADP: "#d46a8e", ADV: "#8b6abf", CCONJ: "#40b0a0", SCONJ: "#40b0a0", PRON: "#c07830", AUX: "#7080a0", PROPN: "#c0a020", NUM: "#80a840", PUNCT: "#505060", PART: "#7080a0", INTJ: "#d46a6a" };
+
+  // Dependency heuristic: DET/ADJ → next NOUN, ADP → prev VERB/NOUN, NOUN → prev/next VERB
+  const findHead = (i, tags) => {
+    const tag = tags[i]?.tag;
+    if (tag === "DET" || tag === "ADJ") {
+      for (let j = i + 1; j < Math.min(tags.length, i + 4); j++) {
+        if (tags[j].tag === "NOUN" || tags[j].tag === "PROPN") return j;
+      }
+    }
+    if (tag === "ADP") {
+      for (let j = i + 1; j < Math.min(tags.length, i + 4); j++) {
+        if (tags[j].tag === "NOUN" || tags[j].tag === "PROPN" || tags[j].tag === "DET") return j;
+      }
+    }
+    if (tag === "NOUN" || tag === "PROPN" || tag === "PRON") {
+      for (let j = 0; j < tags.length; j++) {
+        if (j !== i && (tags[j].tag === "VERB" || tags[j].tag === "AUX")) return j;
+      }
+    }
+    if (tag === "ADV") {
+      for (let j = i + 1; j < Math.min(tags.length, i + 3); j++) {
+        if (tags[j].tag === "VERB" || tags[j].tag === "ADJ") return j;
+      }
+    }
+    return -1;
+  };
 
   return (
     <div style={{ padding: 20 }}>
-      <input value={sentence} onChange={(e) => setSentence(e.target.value)} placeholder="Enter a sentence..."
-        style={{ width: "100%", background: `${pal.muted}15`, border: `1px solid ${pal.muted}40`, color: pal.fg, padding: "6px 10px", borderRadius: 4, fontFamily: "monospace", fontSize: 12, marginBottom: 16, outline: "none" }} />
-      <svg viewBox={`-10 -10 ${tagged.length * 55 + 20} 100`} style={{ width: "100%", maxHeight: 130, overflow: "visible" }}>
-        {tagged.map((t, i) => {
-          // Simple dependency: each word points to the nearest VERB or NOUN to its right
-          const head = tagged.findIndex((h, j) => j > i && (h.pos === "VERB" || h.pos === "NOUN"));
-          if (head < 0 || head === i) return null;
-          const x1 = i * 55 + 20, x2 = head * 55 + 20;
-          const mx = (x1 + x2) / 2, my = -5 - Math.abs(head - i) * 6;
-          return (
-            <path key={`e${i}`} d={`M${x1},20 Q${mx},${my} ${x2},20`} fill="none"
-              stroke={hovered === i ? pal.accent : pal.muted} strokeWidth={hovered === i ? 1.5 : 0.8} />
-          );
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <input value={sentence} onChange={(e) => setSentence(e.target.value)} placeholder="Enter a sentence to tag..."
+          style={{ flex: 1, minWidth: 200, background: `${pal.muted}15`, border: `1px solid ${pal.muted}40`, color: pal.fg, padding: "6px 10px", borderRadius: 4, fontFamily: "monospace", fontSize: 12, outline: "none" }} />
+        <select value={activeCorpus} onChange={(e) => { setActiveCorpus(e.target.value); setSentIdx(0); }}
+          style={{ background: `${pal.muted}15`, border: `1px solid ${pal.muted}40`, color: pal.fg, padding: "5px 8px", borderRadius: 4, fontFamily: "monospace", fontSize: 10, outline: "none" }}>
+          {corpora.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {corpusSentences.length > 0 && <>
+          <button onClick={() => setSentIdx(Math.max(0, sentIdx - 1))} style={{ background: "transparent", border: `1px solid ${pal.muted}40`, color: pal.muted, padding: "3px 8px", borderRadius: 3, cursor: "pointer", fontFamily: "monospace", fontSize: 10 }}>←</button>
+          <span style={{ fontFamily: "monospace", fontSize: 9, color: pal.muted }}>{sentIdx + 1}/{corpusSentences.length}</span>
+          <button onClick={() => setSentIdx(Math.min(corpusSentences.length - 1, sentIdx + 1))} style={{ background: "transparent", border: `1px solid ${pal.muted}40`, color: pal.muted, padding: "3px 8px", borderRadius: 3, cursor: "pointer", fontFamily: "monospace", fontSize: 10 }}>→</button>
+        </>}
+      </div>
+
+      <svg viewBox={`-10 -15 ${currentTagged.length * 52 + 20} 100`} style={{ width: "100%", maxHeight: 130, overflow: "visible" }}>
+        {currentTagged.map((t, i) => {
+          const head = findHead(i, currentTagged);
+          if (head < 0) return null;
+          const x1 = i * 52 + 20, x2 = head * 52 + 20;
+          const mx = (x1 + x2) / 2, my = -5 - Math.abs(head - i) * 5;
+          return <path key={`e${i}`} d={`M${x1},20 Q${mx},${my} ${x2},20`} fill="none" stroke={hovered === i ? pal.accent : pal.muted} strokeWidth={hovered === i ? 1.5 : 0.7} />;
         })}
-        {tagged.map((t, i) => (
+        {currentTagged.map((t, i) => (
           <g key={`n${i}`} onMouseEnter={() => setHovered(i)} onMouseLeave={() => setHovered(null)} style={{ cursor: "pointer" }}>
-            <rect x={i * 55 + 2} y={14} width={36} height={16} rx={3}
-              fill={hovered === i ? `${posColors[t.pos] || pal.accent}30` : `${pal.muted}15`}
-              stroke={hovered === i ? posColors[t.pos] || pal.accent : "transparent"} strokeWidth={1} />
-            <text x={i * 55 + 20} y={26} textAnchor="middle" fill={posColors[t.pos] || pal.fg} fontSize={9} fontFamily="monospace" fontWeight="600">{t.w}</text>
-            <text x={i * 55 + 20} y={42} textAnchor="middle" fill={pal.muted} fontSize={7} fontFamily="monospace">{t.pos}</text>
+            <rect x={i * 52 + 2} y={13} width={36} height={16} rx={3}
+              fill={hovered === i ? `${posColors[t.tag] || pal.accent}30` : `${pal.muted}12`}
+              stroke={hovered === i ? posColors[t.tag] || pal.accent : "transparent"} strokeWidth={1} />
+            <text x={i * 52 + 20} y={25} textAnchor="middle" fill={posColors[t.tag] || pal.fg} fontSize={9} fontFamily="monospace" fontWeight="600">{t.word}</text>
+            <text x={i * 52 + 20} y={40} textAnchor="middle" fill={pal.muted} fontSize={7} fontFamily="monospace">{t.tag}</text>
+            {t.lemma && t.lemma !== t.word.toLowerCase() && (
+              <text x={i * 52 + 20} y={50} textAnchor="middle" fill={`${pal.accent}80`} fontSize={6} fontFamily="monospace">→{t.lemma}</text>
+            )}
           </g>
         ))}
       </svg>
-      <div style={{ display: "flex", gap: 10, marginTop: 10, fontFamily: "monospace", fontSize: 9, color: pal.muted, flexWrap: "wrap" }}>
-        {Object.entries(posColors).map(([pos, color]) => (
+
+      {hovered !== null && currentTagged[hovered] && (
+        <div style={{ fontFamily: "monospace", fontSize: 10, color: pal.fg, padding: "6px 10px", background: pal.glow, borderRadius: 4, marginTop: 6 }}>
+          <span style={{ color: pal.accent }}>{currentTagged[hovered].word}</span> → {currentTagged[hovered].tag}
+          {currentTagged[hovered].lemma && ` · lemma: ${currentTagged[hovered].lemma}`}
+        </div>
+      )}
+
+      {/* POS Distribution */}
+      {posDist && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 9, color: pal.muted, fontFamily: "monospace", marginBottom: 6 }}>POS DISTRIBUTION ({posDist.total} tokens tagged)</div>
+          <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+            {Object.entries(posDist.distribution).sort((a, b) => b[1].count - a[1].count).map(([tag, { count, ratio }]) => (
+              <div key={tag} style={{ padding: "3px 6px", background: `${posColors[tag] || pal.muted}20`, border: `1px solid ${posColors[tag] || pal.muted}40`, borderRadius: 3, fontFamily: "monospace", fontSize: 9, color: posColors[tag] || pal.fg }}>
+                {tag}: {count} ({(ratio * 100).toFixed(1)}%)
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 10, fontFamily: "monospace", fontSize: 9, color: pal.muted, flexWrap: "wrap" }}>
+        {Object.entries(posColors).slice(0, 10).map(([pos, color]) => (
           <span key={pos} style={{ color }}>● {pos}</span>
         ))}
       </div>
