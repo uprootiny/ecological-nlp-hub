@@ -1,0 +1,10 @@
+{
+  "name": "Ecological NLP Hub",
+  "short_name": "NLP Hub",
+  "description": "Browser-native NLP research workbench with 14 interactive corpus analysis interfaces",
+  "start_url": "/ecological-nlp-hub/",
+  "display": "standalone",
+  "background_color": "#0a0b0f",
+  "theme_color": "#0a0b0f",
+  "icons": []
+}
